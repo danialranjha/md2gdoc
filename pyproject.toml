@@ -1,0 +1,58 @@
+[project]
+name = "md2gdoc"
+version = "0.1.0"
+description = "Convert markdown files to Google Docs with proper formatting"
+readme = "README.md"
+authors = [{ name = "Danial", email = "danial@example.com" }]
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.108.0",
+    "google-auth-httplib2>=0.1.1",
+    "google-auth-oauthlib>=1.1.0",
+    "loguru>=0.7.3",
+]
+
+[project.scripts]
+md2gdoc = "md2gdoc.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["mypy>=1.15.0", "pytest>=8.3.3", "pytest-cov>=6.0.0", "ruff>=0.7.3"]
+
+[tool.ruff]
+exclude = ["build"]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "B",   # flake8-bugbear
+    "C",   # flake8-comprehensions
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "SIM", # flake8-simplify
+    "UP",  # pyupgrade
+    "W",   # pycodestyle warnings
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.bumpversion]
+current_version = "0.1.0"
+tag = true
+commit = true
+pre_commit_hooks = ["uv lock", "git add uv.lock"]

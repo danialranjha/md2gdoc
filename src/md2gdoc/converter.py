@@ -1,46 +1,85 @@
-#!/usr/bin/env python3
-"""
-Markdown to Google Docs Converter
-
-This script converts a markdown file to a Google Doc with proper formatting.
-"""
-
 import re
-import sys
-import argparse
 from pathlib import Path
+from typing import List, Tuple
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from loguru import logger
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/documents"]
 
+
+def get_credentials_paths():
+    """Get the paths for credentials and token files."""
+    from pathlib import Path
+    
+    # Try ~/.config/md2gdoc/ first (recommended)
+    config_dir = Path.home() / ".config" / "md2gdoc"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    
+    config_creds = config_dir / "credentials.json"
+    config_token = config_dir / "token.json"
+    
+    # Fallback to current directory
+    current_creds = Path("credentials.json")
+    current_token = Path("token.json")
+    
+    # Determine which credentials file to use
+    if config_creds.exists():
+        creds_path = config_creds
+        token_path = config_token
+    elif current_creds.exists():
+        creds_path = current_creds
+        token_path = current_token
+    else:
+        # Default to config directory for new files
+        creds_path = config_creds
+        token_path = config_token
+    
+    return creds_path, token_path
+
+
 def authenticate_docs_service():
     """Authenticate and build the Google Docs service."""
+    creds_path, token_path = get_credentials_paths()
+    
     creds = None
     # The file token.json stores the user's access and refresh tokens.
-    if Path("token.json").exists():
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
     
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            if not creds_path.exists():
+                raise FileNotFoundError(
+                    f"Google API credentials not found. Please save credentials.json to:\n"
+                    f"  {creds_path}\n"
+                    f"Or current directory: credentials.json\n\n"
+                    f"Get credentials from: https://console.cloud.google.com/"
+                )
+            
             flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
+                str(creds_path), SCOPES
             )
             creds = flow.run_local_server(port=0)
+        
         # Save the credentials for the next run
-        with open("token.json", "w") as token:
+        with open(token_path, "w") as token:
             token.write(creds.to_json())
+        
+        logger.info(f"Authentication token saved to: {token_path}")
 
     return build("docs", "v1", credentials=creds)
 
-def build_requests_and_text(md_content):
+
+def build_requests_and_text(md_content: str) -> Tuple[str, List[dict]]:
     """
     Parse markdown content and build a combined text string plus formatting requests.
     Returns the full text to insert and a list of formatting requests.
@@ -92,7 +131,7 @@ def build_requests_and_text(md_content):
             # Checked markdown checkbox: Remove the '- [x]' marker and flag as checklist item.
             new_line = line[6:].strip() + "\n"
             is_checkbox = True
-        elif re.match(r"^-", line):
+        elif re.match(r"^\s*-", line):
             # Bullet point. Count leading spaces to determine indent (assume 2 spaces per level).
             match = re.match(r"^(\s*)-\s*(.*)", line)
             if match:
@@ -101,7 +140,7 @@ def build_requests_and_text(md_content):
                 new_line = "• " + match.group(2).strip() + "\n"
             else:
                 new_line = line + "\n"
-        elif re.match(r"^\d+\.", line):
+        elif re.match(r"^\s*\d+\.", line):
             # Numbered list
             match = re.match(r"^(\s*)\d+\.\s*(.*)", line)
             if match:
@@ -179,12 +218,14 @@ def build_requests_and_text(md_content):
 
     return full_text, requests
 
-def create_google_doc(service, title, md_content):
+
+def create_google_doc(service, title: str, md_content: str) -> str | None:
     """Create a Google Doc from markdown content."""
     try:
         # Create a new Google Doc.
         doc = service.documents().create(body={"title": title}).execute()
         doc_id = doc["documentId"]
+        logger.info(f"Created Google Doc with ID: {doc_id}")
 
         # Build full text and formatting requests from markdown.
         full_text, requests = build_requests_and_text(md_content)
@@ -196,54 +237,50 @@ def create_google_doc(service, title, md_content):
             ]
         }
         service.documents().batchUpdate(documentId=doc_id, body=insert_request).execute()
+        logger.info("Inserted text into document")
 
         # Then, apply formatting requests.
         if requests:
             service.documents().batchUpdate(documentId=doc_id, body={"requests": requests}).execute()
+            logger.info(f"Applied {len(requests)} formatting requests")
 
         return f"https://docs.google.com/document/d/{doc_id}"
     except HttpError as error:
-        print(f"An error occurred: {error}")
+        logger.error(f"An error occurred: {error}")
         return None
 
-def main():
-    parser = argparse.ArgumentParser(description="Convert markdown file to Google Doc")
-    parser.add_argument("markdown_file", help="Path to the markdown file")
-    parser.add_argument("-t", "--title", help="Title for the Google Doc (defaults to filename)")
-    
-    args = parser.parse_args()
-    
+
+def convert_markdown_to_gdoc(markdown_file: str, title: str | None = None) -> str | None:
+    """Convert a markdown file to a Google Doc."""
     # Check if file exists
-    md_file = Path(args.markdown_file)
+    md_file = Path(markdown_file)
     if not md_file.exists():
-        print(f"Error: File '{args.markdown_file}' not found.")
-        sys.exit(1)
+        logger.error(f"File '{markdown_file}' not found.")
+        return None
     
     # Determine title
-    title = args.title if args.title else md_file.stem
+    doc_title = title if title else md_file.stem
     
     # Read markdown content
     try:
         with open(md_file, 'r', encoding='utf-8') as f:
             md_content = f.read()
     except Exception as e:
-        print(f"Error reading file: {e}")
-        sys.exit(1)
+        logger.error(f"Error reading file: {e}")
+        return None
     
     # Authenticate and create document
     try:
         service = authenticate_docs_service()
-        doc_link = create_google_doc(service, title, md_content)
+        doc_link = create_google_doc(service, doc_title, md_content)
         
         if doc_link:
-            print(f"Google Doc created successfully: {doc_link}")
+            logger.success(f"Google Doc created successfully: {doc_link}")
+            return doc_link
         else:
-            print("Failed to create document.")
-            sys.exit(1)
+            logger.error("Failed to create document.")
+            return None
             
     except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+        logger.error(f"Error: {e}")
+        return None
