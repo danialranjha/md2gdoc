@@ -19,7 +19,7 @@ md2gdoc example.md
 
 ### Option 2: Install from source
 ```bash
-git clone <repository-url>
+git clone https://github.com/danialranjha/md2gdoc.git
 cd md2gdoc
 pipx install .
 ```
@@ -96,7 +96,7 @@ If you want to contribute or modify the code:
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/danialranjha/md2gdoc.git
 cd md2gdoc
 
 # Set up development environment
